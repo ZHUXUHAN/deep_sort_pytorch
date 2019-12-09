@@ -8,6 +8,7 @@ from distutils.util import strtobool
 from YOLOv3 import YOLOv3
 from deep_sort import DeepSort
 from util import COLORS_10, draw_bboxes
+from PIL import Image
 
 
 class Detector(object):
@@ -19,10 +20,10 @@ class Detector(object):
             cv2.resizeWindow("test", args.display_width, args.display_height)
 
         self.vdo = cv2.VideoCapture()
-        self.yolo3 = YOLOv3(args.yolo_cfg, args.yolo_weights, args.yolo_names, is_xywh=True, conf_thresh=args.conf_thresh, nms_thresh=args.nms_thresh, use_cuda=use_cuda)
+        self.yolo3 = YOLOv3(args.yolo_cfg, args.yolo_weights, args.yolo_names, is_xywh=True,
+                            conf_thresh=args.conf_thresh, nms_thresh=args.nms_thresh, use_cuda=use_cuda, img_size=args.image_size)
         self.deepsort = DeepSort(args.deepsort_checkpoint, use_cuda=use_cuda)
         self.class_names = self.yolo3.class_names
-
 
     def __enter__(self):
         assert os.path.isfile(self.args.VIDEO_PATH), "Error: path error"
@@ -31,41 +32,39 @@ class Detector(object):
         self.im_height = int(self.vdo.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         if self.args.save_path:
-            fourcc =  cv2.VideoWriter_fourcc(*'MJPG')
-            self.output = cv2.VideoWriter(self.args.save_path, fourcc, 20, (self.im_width,self.im_height))
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            self.output = cv2.VideoWriter(self.args.save_path, fourcc, 20, (self.im_width, self.im_height))
 
         assert self.vdo.isOpened()
         return self
 
-    
     def __exit__(self, exc_type, exc_value, exc_traceback):
         if exc_type:
             print(exc_type, exc_value, exc_traceback)
-        
 
     def detect(self):
-        while self.vdo.grab(): 
+        while self.vdo.grab():
             start = time.time()
             _, ori_im = self.vdo.retrieve()
-            im = cv2.cvtColor(ori_im, cv2.COLOR_BGR2RGB)
-            im = ori_im
-            bbox_xcycwh, cls_conf, cls_ids = self.yolo3(im)
+            im_2_pil = cv2.cvtColor(ori_im, cv2.COLOR_BGR2RGB)
+            im_2_pil = Image.fromarray(im_2_pil)
+            bbox_xcycwh, cls_conf, cls_ids = self.yolo3(im_2_pil)
             if bbox_xcycwh is not None:
                 # select class person
-                mask = cls_ids==0
+                mask = cls_ids == 0
 
                 bbox_xcycwh = bbox_xcycwh[mask]
-                bbox_xcycwh[:,3:] *= 1.2
+                # bbox_xcycwh[:, 3:] *= 1.2
 
                 cls_conf = cls_conf[mask]
-                outputs = self.deepsort.update(bbox_xcycwh, cls_conf, im)
+                outputs = self.deepsort.update(bbox_xcycwh, cls_conf, ori_im)
                 if len(outputs) > 0:
-                    bbox_xyxy = outputs[:,:4]
-                    identities = outputs[:,-1]
+                    bbox_xyxy = outputs[:, :4]
+                    identities = outputs[:, -1]
                     ori_im = draw_bboxes(ori_im, bbox_xyxy, identities)
 
             end = time.time()
-            print("time: {}s, fps: {}".format(end-start, 1/(end-start)))
+            print("time: {}s, fps: {}".format(end - start, 1 / (end - start)))
 
             if self.args.display:
                 cv2.imshow("test", ori_im)
@@ -73,7 +72,7 @@ class Detector(object):
 
             if self.args.save_path:
                 self.output.write(ori_im)
-            
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -90,10 +89,11 @@ def parse_args():
     parser.add_argument("--display_height", type=int, default=600)
     parser.add_argument("--save_path", type=str, default="demo.avi")
     parser.add_argument("--use_cuda", type=str, default="True")
+    parser.add_argument("--image_size", type=int, default=1024)
     return parser.parse_args()
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     args = parse_args()
     with Detector(args) as det:
         det.detect()
